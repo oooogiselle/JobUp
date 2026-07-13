@@ -1,0 +1,40 @@
+# JobUp configuration (LLD §9). Secrets are NOT here — they come from env
+# (ANTHROPIC_API_KEY, etc.). See docs/SECURITY.md.
+
+poll_interval_min: 20          # frequent polling for timeliness (PRD G8)
+daily_summary_at: "08:00"      # daily summary; per-job alerts are real-time
+min_score: 0.6
+
+target:
+  levels: [new-grad, entry, junior, intern]
+  locations: [Remote, "San Francisco, CA", "New York, NY"]
+  keywords_boost: [python, ml, backend, react]
+  must_have: []
+  exclude: [senior, staff, principal, manager, clearance]
+
+sources:
+  greenhouse_tokens: [stripe, airbnb, databricks]   # Greenhouse board tokens
+  lever_tokens: []                                  # Lever board tokens (e.g. matchgroup)
+  ashby_tokens: [ramp, openai]                      # Ashby job-board tokens
+  company_names:                     # optional display-name overrides
+    stripe: Stripe
+    openai: OpenAI
+  simplify_repos: ["SimplifyJobs/New-Grad-Positions"]
+  company_sites: []
+  indeed:
+    enabled: true
+    queries: ["new grad software engineer"]
+
+llm:
+  triage_model: claude-sonnet-5      # matching, enrichment, factual verify
+  tailor_model: claude-opus-4-8      # resume tailoring
+
+notify:
+  realtime: true
+  channels: [email]                  # phase 2: add push / telegram
+  email: you@example.com             # set your own (alerts go here)
+  min_score_alert: 0.7
+  burst_batch_min: 10
+  daily_summary: true
+
+db_path: data/jobup.sqlite3

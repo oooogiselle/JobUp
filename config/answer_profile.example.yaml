@@ -1,0 +1,13 @@
+# Example reusable application answers (safe to commit). Copy to
+# config/answer_profile.yaml (git-ignored, PII) and edit. Empty values are
+# flagged as "unanswered" for you to fill per-application.
+
+work_authorization: US citizen
+requires_sponsorship: "No"
+earliest_start_date: "2026-08-01"
+preferred_locations: "Remote / SF / NYC"
+github: https://github.com/example
+linkedin: https://linkedin.com/in/example
+portfolio: ""            # empty -> flagged as unanswered
+gender: ""               # EEO, optional -> flagged
+veteran_status: ""       # EEO, optional -> flagged

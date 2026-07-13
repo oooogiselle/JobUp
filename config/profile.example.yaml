@@ -1,0 +1,26 @@
+# Example profile (safe to commit). Copy to config/profile.yaml and edit —
+# the real file is git-ignored (PII). The experience library is the ONLY well of
+# facts the tailor may draw from (SECURITY.md T2).
+
+name: Giselle Example
+summary: New-grad software engineer focused on backend and ML.
+locations: [Remote, "San Francisco, CA", "New York, NY"]
+work_authorization: US citizen
+needs_sponsorship: false
+levels: [new-grad, entry, junior, intern]
+skills: [python, go, react, sql, pytorch, distributed-systems]
+
+experience:
+  - title: Software Engineering Intern
+    org: Acme Corp
+    dates: Summer 2025
+    bullets:
+      - Built a Python service handling 2k requests/sec on the payments team.
+      - Cut p99 latency 40% by adding a Redis cache layer.
+    skills: [python, redis, distributed-systems]
+  - title: Research Assistant
+    org: University ML Lab
+    dates: 2024-2025
+    bullets:
+      - Trained PyTorch models for image classification; +6% accuracy over baseline.
+    skills: [pytorch, python, ml]

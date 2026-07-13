@@ -1,0 +1,34 @@
+{
+  "jobs": [
+    {
+      "id": 5501111,
+      "title": "New Grad Software Engineer",
+      "updated_at": "2026-07-11T18:04:00-04:00",
+      "location": { "name": "San Francisco, CA" },
+      "absolute_url": "https://stripe.com/jobs/listing/new-grad-software-engineer/5501111",
+      "content": "&lt;p&gt;We are hiring &lt;strong&gt;new grads&lt;/strong&gt; for our Payments Infra team. You will write Python and Go.&lt;/p&gt;",
+      "departments": [{ "name": "Engineering" }],
+      "offices": [{ "name": "San Francisco" }]
+    },
+    {
+      "id": 5501222,
+      "title": "Staff Software Engineer, Platform",
+      "updated_at": "2026-07-10T09:00:00-04:00",
+      "location": { "name": "Remote" },
+      "absolute_url": "https://stripe.com/jobs/listing/staff-software-engineer/5501222",
+      "content": "&lt;p&gt;Senior role requiring 8+ years experience.&lt;/p&gt;",
+      "departments": [{ "name": "Engineering" }],
+      "offices": [{ "name": "Remote" }]
+    },
+    {
+      "id": 5501111,
+      "title": "New Grad Software Engineer",
+      "updated_at": "2026-07-11T18:04:00-04:00",
+      "location": { "name": "San Francisco, CA" },
+      "absolute_url": "https://stripe.com/jobs/listing/new-grad-software-engineer/5501111",
+      "content": "&lt;p&gt;Duplicate of the first posting (same URL).&lt;/p&gt;",
+      "departments": [{ "name": "Engineering" }],
+      "offices": [{ "name": "San Francisco" }]
+    }
+  ]
+}

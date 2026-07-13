@@ -1,0 +1,18 @@
+# Secrets & PII — never commit
+.env
+*.env
+!.env.example
+config/profile.yaml
+config/answer_profile.yaml
+data/
+resumes/
+*.sqlite
+*.sqlite3
+*.db
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
