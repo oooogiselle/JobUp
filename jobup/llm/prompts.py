@@ -64,15 +64,47 @@ def tailor_user(job: JobPosting, profile: UserProfile, mode: str = "light") -> s
     )
 
 
+# --- resume revision (self-correction after a failed factual check) ---------
+
+TAILOR_REVISE_SYSTEM = (
+    "You are revising a candidate's tailored resume that FAILED a factual check: "
+    "a strict verifier found claims not supported by the candidate's EXPERIENCE "
+    "LIBRARY. Produce a corrected resume that removes or rewrites EVERY flagged "
+    "claim so it is fully grounded. RULES:\n"
+    "1. Delete or truthfully soften each unsupported claim — do NOT invent new "
+    "facts to replace them. Only the experience library is ground truth.\n"
+    "2. Keep everything already supported; preserve structure and length.\n"
+    "3. Output ONLY the corrected resume in Markdown. No commentary.\n\n"
+    + UNTRUSTED_SYSTEM_RULE
+)
+
+
+def tailor_revise_user(job: JobPosting, profile: UserProfile, draft: str,
+                       unsupported_claims: list[str]) -> str:
+    flagged = "\n".join(f"  - {c}" for c in unsupported_claims) or "  (none listed)"
+    return (
+        f"EXPERIENCE LIBRARY (the only facts you may use):\n"
+        f"{profile.experience_library_text()}\n\n"
+        f"TARGET JOB: {job.company} — {job.title} ({job.location})\n"
+        f"{_fenced_jd(job)}\n\n"
+        f"CURRENT RESUME (failed the factual check):\n{draft}\n\n"
+        f"UNSUPPORTED CLAIMS the verifier flagged — fix every one:\n{flagged}"
+    )
+
+
 # --- factual verification --------------------------------------------------
 
 VERIFY_SYSTEM = (
     "You are a strict fact-checker. Given a candidate's EXPERIENCE LIBRARY (ground "
-    "truth) and a TAILORED RESUME, list every concrete claim in the resume — "
-    "skill, tool, metric, job title, employer, date — that is NOT supported by the "
-    "library. passed=true only if there are zero unsupported claims. Do not give "
-    "the benefit of the doubt: an added metric, tool, or employer the library "
-    "never mentions is unsupported."
+    "truth) and a TAILORED RESUME, list every substantive PROFESSIONAL claim in the "
+    "resume — skill, tool, metric, job title, employer, date, achievement — that is "
+    "NOT supported by the library. passed=true only if there are zero unsupported "
+    "claims. Do not give the benefit of the doubt: an added metric, tool, or employer "
+    "the library never mentions is unsupported.\n"
+    "Do NOT flag standard resume header / identity fields — the candidate's name, "
+    "location or city, email, phone, or LinkedIn/GitHub/portfolio links — as "
+    "unsupported. Those are identity, not professional claims. Also do not flag "
+    "generic section headings or reworded-but-equivalent phrasings of real bullets."
 )
 
 

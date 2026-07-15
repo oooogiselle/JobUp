@@ -154,6 +154,76 @@ def test_get_profile(client):
     assert "profile" in d and "answers" in d
 
 
+def test_resume_library(client):
+    c, _ = client
+    assert c.get("/api/resumes", headers=AUTH).json() == []          # empty
+    r = c.post("/api/resumes", headers=AUTH, json={"from_profile": True}).json()
+    assert len(r["resumes"]) == 1                                    # saved from profile
+    rid = r["resumes"][0]["id"]
+    assert r["resumes"][0]["is_default"] is True                     # first is auto-default
+    body = c.get(f"/api/resumes/{rid}", headers=AUTH).json()
+    assert body["markdown"].startswith("#")                          # markdown resume
+    assert c.get(f"/api/resumes/{rid}/pdf", headers=AUTH).content[:5] == b"%PDF-"
+    assert c.delete(f"/api/resumes/{rid}", headers=AUTH).json()["resumes"] == []
+
+
+def test_default_resume_switch(client):
+    c, _ = client
+    a = c.post("/api/resumes", headers=AUTH, json={"name": "A", "markdown": "# A"}).json()["resumes"][0]["id"]
+    c.post("/api/resumes", headers=AUTH, json={"name": "B", "markdown": "# B"})
+    # first (A) is default; switch default to the second
+    lst = c.get("/api/resumes", headers=AUTH).json()
+    assert sum(r["is_default"] for r in lst) == 1
+    b = next(r["id"] for r in lst if not r["is_default"])
+    lst2 = c.post(f"/api/resumes/{b}/default", headers=AUTH).json()["resumes"]
+    assert next(r["is_default"] for r in lst2 if r["id"] == b) is True
+    assert next(r["is_default"] for r in lst2 if r["id"] == a) is False
+
+
+def test_needs_attention_and_fit_order(client):
+    c, app_id = client
+    # seeded resume passed its factual check -> not in the needs-attention bucket
+    assert len(c.get("/api/applications?needs_attention=true", headers=AUTH).json()) == 0
+    assert len(c.get("/api/applications?needs_attention=false", headers=AUTH).json()) == 1
+    # fit ordering is accepted and returns the app
+    rows = c.get("/api/applications?order=fit", headers=AUTH).json()
+    assert len(rows) == 1
+
+
+def test_package_zip_download(client):
+    c, app_id = client
+    r = c.get(f"/api/applications/{app_id}/package.zip", headers=AUTH)
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    assert r.content[:2] == b"PK"                    # zip magic
+    import io, zipfile
+    names = set(zipfile.ZipFile(io.BytesIO(r.content)).namelist())
+    assert "checklist.md" in names and "resume.pdf" in names
+
+
+def test_finalize_approves_and_generates(tmp_path):
+    from jobup.llm.client import FakeLLM, FactualCheck
+    db = tmp_path / "f.sqlite3"
+    app_id = _seed(db)
+
+    def parse_fn(user, schema):
+        return {"passed": True, "unsupported_claims": [], "notes": ""}
+    llm = FakeLLM(parse_fn=parse_fn,
+                  generate_fn=lambda u: "Dear Acme,\nI built Python services.\nRegards")
+    c = TestClient(create_app(store_path=str(db), token=TOKEN, llm=llm))
+    b = c.post(f"/api/applications/{app_id}/finalize", headers=AUTH).json()
+    assert b["status"] == "approved"                 # advanced from prepared
+    assert b["cover_letter"].startswith("Dear Acme")
+    assert b["why_this_company"]                      # per-job answer generated
+    assert "why_this_company" not in b["unanswered"] # moved into answers
+
+
+def test_run_status_idle(client):
+    c, _ = client
+    s = c.get("/api/run", headers=AUTH).json()
+    assert s["running"] is False
+
+
 def test_upload_resume_endpoint(tmp_path, monkeypatch):
     from jobup.db import Store as _S
     from jobup.llm.client import FakeLLM

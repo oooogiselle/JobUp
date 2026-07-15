@@ -6,24 +6,63 @@ daily_summary_at: "08:00"      # daily summary; per-job alerts are real-time
 min_score: 0.6
 
 target:
-  levels: [new-grad, entry, junior, intern]
-  locations: [Remote, "San Francisco, CA", "New York, NY"]
-  keywords_boost: [python, ml, backend, react]
-  must_have: []
-  exclude: [senior, staff, principal, manager, clearance]
+  # roles: if set, a job's TITLE must contain at least one of these words
+  # (free pre-filter, before any AI call). Leave empty [] to allow all titles.
+  roles: [engineer, developer, "software", swe, "machine learning", ml, data, research]
+  # exclude: title words that auto-reject (added to senior/staff/etc.).
+  exclude: [senior, staff, principal, manager, director, lead, sales, "account executive",
+            recruiter, marketing, clearance, intern, "sr.", " ii", " iii", " iv",
+            experienced, architect, "vp ", "head of", "mid-level", "mid level"]  # keeps it new-grad
+  levels: [new-grad, entry, junior]
+  locations: [Remote, "San Francisco, CA", "New York, NY"]  # also set these in your profile
 
 sources:
-  greenhouse_tokens: [stripe, airbnb, databricks]   # Greenhouse board tokens
-  lever_tokens: []                                  # Lever board tokens (e.g. matchgroup)
-  ashby_tokens: [ramp, openai]                      # Ashby job-board tokens
+  # All verified live (returning jobs). Add/remove any company token freely.
+  greenhouse_tokens: [stripe, databricks, datadog, brex, cloudflare, roblox, airbnb,
+                      reddit, pinterest, affirm, figma, gitlab, lyft, coinbase,
+                      instacart, robinhood, discord, dropbox, asana, samsara, flexport]
+  ashby_tokens: [openai, notion, cohere, ramp, replit, linear, posthog]
+  lever_tokens: [palantir, matchgroup]
+  # FAANG+ names run on Workday (public careers URL; tenant/site parsed from it).
+  # Meta/Google/Apple/Amazon use proprietary sites (no API) — those come via Simplify.
+  workday_sites:
+    - https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite
+    - https://salesforce.wd12.myworkdayjobs.com/en-US/External_Career_Site
+    - https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced
+    - https://disney.wd5.myworkdayjobs.com/en-US/disneycareer
+    - https://ebay.wd5.myworkdayjobs.com/en-US/apply
+    - https://mastercard.wd1.myworkdayjobs.com/en-US/CorporateCareers
+    - https://autodesk.wd1.myworkdayjobs.com/en-US/Ext
   company_names:                     # optional display-name overrides
     stripe: Stripe
     openai: OpenAI
-  simplify_repos: ["SimplifyJobs/New-Grad-Positions"]
+    gitlab: GitLab
+    posthog: PostHog
+  # Human-curated new-grad lists (highest signal — already NG-only, ToS-clean).
+  simplify_repos:
+    - SimplifyJobs/New-Grad-Positions
+    - vanshb03/New-Grad-2026
   company_sites: []
   indeed:
     enabled: true
     queries: ["new grad software engineer"]
+
+# Standard application questions (BUILD §E). This is the canonical schema every
+# prepared application is pre-filled against from your answer_profile. The keys
+# are fixed in code (jobup/pipeline/answers.py); this list documents them and is
+# the source of the dashboard onboarding form. why_this_company is per-job
+# (generated when you approve a job), so it is not stored in answer_profile.
+answers:
+  standard:
+    - work_authorization
+    - needs_sponsorship
+    - willing_to_relocate
+    - onsite_ok
+    - earliest_start_date
+    - degree
+    - graduation_date
+    - salary_expectation
+    - why_this_company
 
 llm:
   triage_model: claude-sonnet-5      # matching, enrichment, factual verify

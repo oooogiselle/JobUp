@@ -1,13 +1,19 @@
 # Example reusable application answers (safe to commit). Copy to
-# config/answer_profile.yaml (git-ignored, PII) and edit. Empty values are
-# flagged as "unanswered" for you to fill per-application.
+# config/answer_profile.yaml (git-ignored, PII) and edit. These are the canonical
+# standard questions (BUILD §E) — blanks are flagged "unanswered" per application.
+# why_this_company is generated per-job on approve, so it is NOT stored here.
 
+# --- standard application questions (the canonical schema) ---
 work_authorization: US citizen
-requires_sponsorship: "No"
+needs_sponsorship: "No"
+willing_to_relocate: "Yes"
+onsite_ok: "Open to hybrid or onsite"
 earliest_start_date: "2026-08-01"
-preferred_locations: "Remote / SF / NYC"
+degree: "B.S. Computer Science"
+graduation_date: "2026-06"
+salary_expectation: ""       # empty -> flagged as unanswered
+
+# --- contact / links (used by assisted-apply autofill; not "questions") ---
 github: https://github.com/example
 linkedin: https://linkedin.com/in/example
-portfolio: ""            # empty -> flagged as unanswered
-gender: ""               # EEO, optional -> flagged
-veteran_status: ""       # EEO, optional -> flagged
+portfolio: ""                # empty -> flagged as unanswered

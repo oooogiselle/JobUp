@@ -31,7 +31,7 @@ def _build(job: JobPosting, profile: UserProfile, answers: dict,
     """enrich -> tailor -> package (assumes the job already passed matching)."""
     enrichment = enrich(job)
     resume = tailor(job, profile, llm)
-    return build_application(job, resume, enrichment, answers)
+    return build_application(job, resume, enrichment, answers, profile=profile)
 
 
 def prepare_job(job: JobPosting, profile: UserProfile, answers: dict,
@@ -57,17 +57,33 @@ async def prepare(settings: Settings, profile: UserProfile, answers: dict,
     (a cost cap: bounds triage LLM calls per run — LLD §10 / NFR4). When `store`
     is given, each prepared application is persisted for the approval dashboard."""
     jobs, _ = await fetch_jobs(settings)
+    # Newest first, across ALL companies — so we tailor the freshest postings
+    # (time-sensitivity) and get variety instead of exhausting one big board.
+    from datetime import datetime, timezone
+    _old = datetime.min.replace(tzinfo=timezone.utc)
+
+    def _posted(j):
+        d = j.posted_at
+        if d is None:
+            return _old
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+    jobs.sort(key=_posted, reverse=True)
     apps: list[Application] = []
-    scanned = 0
+    triaged = 0
     for job in jobs:
-        if len(apps) >= limit or scanned >= max_scan:
+        if len(apps) >= limit or triaged >= max_scan:
             break
         # Skip postings already prepared in a previous run — don't re-spend LLM
         # calls on them (keeps scheduled runs cheap; only new jobs cost tokens).
         if store is not None and store.get_application(job.id) is not None:
             continue
-        scanned += 1
-        result = match(job, profile, llm, settings.min_score)
+        result = match(job, profile, llm, settings.min_score, target=settings.target)
+        # Hard-filter rejects (wrong level/location/etc.) cost no LLM call — skip
+        # past them for free; only count actual triage calls against max_scan.
+        if result.hard_filter_failed:
+            continue
+        triaged += 1
         if not result.relevant:
             continue
         app = _build(job, profile, answers, llm)

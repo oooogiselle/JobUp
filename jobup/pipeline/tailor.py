@@ -1,9 +1,11 @@
 """Resume tailoring (LLD §5, C7) — the careful part.
 
-Flow: light-align (Opus) -> factual verify (Sonnet) -> fit assessment.
-The factual verifier is a hard gate: if the tailored resume contains any claim
-not supported by the experience library, factual_check_passed is False, the
-unsupported claims are recorded, and the resume is flagged — it never reaches the
+Flow: light-align (Opus) -> factual verify (Sonnet) -> [revise if unsupported]
+-> re-verify -> fit assessment. The verify->revise->re-verify critic loop is
+bounded (MAX_REVISIONS): a draft that flags unsupported claims is fed back to the
+model with those claims as feedback and re-checked. If it still fails after the
+cap, factual_check_passed stays False, the unsupported claims are recorded, and
+the resume is flagged for the "needs attention" bucket — it never reaches the
 approval queue as if it were clean (SECURITY.md T2, invariant #2)."""
 
 from __future__ import annotations
@@ -17,13 +19,19 @@ from ..llm.client import (
 )
 from ..llm.prompts import (
     FIT_SYSTEM,
+    TAILOR_REVISE_SYSTEM,
     TAILOR_SYSTEM,
     VERIFY_SYSTEM,
     fit_user,
+    tailor_revise_user,
     tailor_user,
     verify_user,
 )
 from ..models import JobPosting, TailoredResume, UserProfile
+
+# Bounded critic+retry (BUILD §C): at most this many revise iterations after a
+# failed factual check. Deterministic — not a planner/researcher/writer swarm.
+MAX_REVISIONS = 2
 
 
 def _draft(job: JobPosting, profile: UserProfile, llm: LLMClient, mode: str) -> str:
@@ -31,6 +39,16 @@ def _draft(job: JobPosting, profile: UserProfile, llm: LLMClient, mode: str) -> 
         model=TAILOR_MODEL,
         system=TAILOR_SYSTEM,
         user=tailor_user(job, profile, mode=mode),
+        thinking=True,
+    )
+
+
+def _revise(job: JobPosting, profile: UserProfile, draft: str,
+            claims: list[str], llm: LLMClient) -> str:
+    return llm.generate(
+        model=TAILOR_MODEL,
+        system=TAILOR_REVISE_SYSTEM,
+        user=tailor_revise_user(job, profile, draft, claims),
         thinking=True,
     )
 
@@ -56,11 +74,19 @@ def assess_fit(job: JobPosting, resume_markdown: str, llm: LLMClient) -> FitAsse
 
 
 def tailor(job: JobPosting, profile: UserProfile, llm: LLMClient,
-           mode: str = "light") -> TailoredResume:
-    """Produce a grounded, verified tailored resume. Never emits an unverified
-    resume as clean — an unsupported-claim result blocks factual_check_passed."""
+           mode: str = "light", max_revisions: int = MAX_REVISIONS) -> TailoredResume:
+    """Produce a grounded, verified tailored resume. Runs a bounded
+    draft->verify->revise->re-verify loop: a failed check feeds the flagged
+    claims back for correction (up to max_revisions). Never emits an unverified
+    resume as clean — if it still fails after the cap, factual_check_passed is
+    False and the resume is flagged for review."""
     draft = _draft(job, profile, llm, mode)
     check = verify_factual(draft, profile, llm)
+    revisions = 0
+    while not check.passed and revisions < max_revisions:
+        draft = _revise(job, profile, draft, check.unsupported_claims, llm)
+        check = verify_factual(draft, profile, llm)
+        revisions += 1
     fit = assess_fit(job, draft, llm)
 
     return TailoredResume(
@@ -72,5 +98,6 @@ def tailor(job: JobPosting, profile: UserProfile, llm: LLMClient,
         factual_check_passed=check.passed,
         unsupported_claims=check.unsupported_claims,
         needs_heavy_rewrite=(mode == "light" and fit.needs_heavy_rewrite),
+        revisions=revisions,
         model=TAILOR_MODEL,
     )

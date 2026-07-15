@@ -17,6 +17,8 @@ class JobSourceType(str, Enum):
     INDEED = "indeed"
     SIMPLIFY = "simplify"
     COMPANY = "company"
+    WORKDAY = "workday"
+    IMPORTED = "imported"
 
 
 def _now() -> datetime:
@@ -125,6 +127,7 @@ class TailoredResume(BaseModel):
     factual_check_passed: bool = False
     unsupported_claims: list[str] = Field(default_factory=list)
     needs_heavy_rewrite: bool = False
+    revisions: int = 0                    # self-correction passes spent (LLD C7)
     model: str = ""
 
 
@@ -141,6 +144,8 @@ class Application(BaseModel):
     apply_url: str = ""
     cover_letter: str = ""
     cover_letter_ok: bool = False       # passed the factual verifier
+    why_this_company: str = ""          # per-job answer, generated on approve
+    why_this_company_ok: bool = False   # passed the factual verifier
 
 
 class JobPosting(BaseModel):

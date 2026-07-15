@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS application (
     updated_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_app_status ON application(status);
+
+CREATE TABLE IF NOT EXISTS resume (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    markdown    TEXT NOT NULL,
+    source      TEXT,             -- uploaded | profile | tailored
+    is_default  INTEGER DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
 """
 
 # Columns added after v1; ALTER-in on existing DBs (idempotent migration).
@@ -55,6 +64,7 @@ _MIGRATIONS = [
     ("application", "posted_at", "TEXT"),
     ("application", "description", "TEXT"),
     ("application", "notified_at", "TEXT"),   # real-time alert sent (idempotency)
+    ("resume", "is_default", "INTEGER DEFAULT 0"),
 ]
 
 # Application state machine (LLD §7). The agent only ever writes 'prepared';
@@ -165,9 +175,12 @@ class Store:
 
     def list_applications(self, status: str | None = None, company: str | None = None,
                           min_score: float | None = None, posted_since: str | None = None,
-                          q: str | None = None) -> list[dict]:
+                          q: str | None = None, needs_attention: bool | None = None,
+                          order: str = "recent") -> list[dict]:
         """Filter by status, company (substring), min fit score, posted-on-or-after
-        date (ISO), and a free-text query over title/company/team."""
+        date (ISO), a free-text query over title/company/team, and the
+        needs-attention flag (resumes that failed the factual check). `order` is
+        'fit' (highest fit score first) or 'recent' (newest posting first)."""
         clauses, params = [], []
         if status:
             clauses.append("status = ?"); params.append(status)
@@ -177,13 +190,17 @@ class Store:
             clauses.append("score >= ?"); params.append(min_score)
         if posted_since:
             clauses.append("posted_at >= ?"); params.append(posted_since)
+        if needs_attention is not None:
+            clauses.append("COALESCE(factual_check_passed,0) = ?")
+            params.append(0 if needs_attention else 1)
         if q:
             clauses.append("(title LIKE ? OR company LIKE ? OR team LIKE ?)")
             params += [f"%{q}%"] * 3
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        order_sql = ("score IS NULL, score DESC, COALESCE(posted_at, updated_at) DESC"
+                     if order == "fit" else "COALESCE(posted_at, updated_at) DESC")
         rows = self.conn.execute(
-            f"SELECT * FROM application{where} ORDER BY "
-            "COALESCE(posted_at, updated_at) DESC", params).fetchall()
+            f"SELECT * FROM application{where} ORDER BY {order_sql}", params).fetchall()
         return [self._app_summary(r) for r in rows]
 
     def companies(self) -> list[str]:
@@ -251,13 +268,22 @@ class Store:
         self.conn.commit()
         return self.get_application(app_id)
 
-    def update_cover_letter(self, app_id: str, text: str, ok: bool) -> dict:
+    def finalize_generation(self, app_id: str, cover_letter: str, cover_ok: bool,
+                            why: str, why_ok: bool) -> dict:
+        """Store the on-approve generated artifacts (cover letter + per-job
+        'why this company'), and move why_this_company from unanswered -> answers."""
         row = self.get_application(app_id)
         if not row:
             raise KeyError(app_id)
         data = json.loads(row["data"])
-        data["cover_letter"] = text
-        data["cover_letter_ok"] = ok
+        data["cover_letter"] = cover_letter
+        data["cover_letter_ok"] = cover_ok
+        data["why_this_company"] = why
+        data["why_this_company_ok"] = why_ok
+        if why:
+            data.setdefault("answers", {})["why_this_company"] = why
+            data["unanswered"] = [k for k in data.get("unanswered", [])
+                                  if k != "why_this_company"]
         self.conn.execute("UPDATE application SET data=?, updated_at=? WHERE id=?",
                           (json.dumps(data), _now_iso(), app_id))
         self.conn.commit()
@@ -287,6 +313,48 @@ class Store:
             "team": r["team"], "posted_at": r["posted_at"],
             "updated_at": r["updated_at"],
         }
+
+    # -- resume library ----------------------------------------------------
+    def save_resume(self, name: str, markdown: str, source: str = "uploaded") -> str:
+        import uuid
+        rid = uuid.uuid4().hex[:12]
+        first = self.conn.execute("SELECT COUNT(*) FROM resume").fetchone()[0] == 0
+        self.conn.execute(
+            "INSERT INTO resume (id, name, markdown, source, is_default, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (rid, name, markdown, source, 1 if first else 0, _now_iso()))
+        self.conn.commit()
+        return rid
+
+    def list_resumes(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT id, name, source, is_default, created_at, LENGTH(markdown) AS size "
+            "FROM resume ORDER BY is_default DESC, created_at DESC").fetchall()
+        return [{**dict(r), "is_default": bool(r["is_default"])} for r in rows]
+
+    def get_resume(self, rid: str) -> dict | None:
+        row = self.conn.execute("SELECT * FROM resume WHERE id=?", (rid,)).fetchone()
+        return dict(row) if row else None
+
+    def set_default_resume(self, rid: str) -> None:
+        self.conn.execute("UPDATE resume SET is_default = (id = ?)", (rid,))
+        self.conn.commit()
+
+    def default_resume(self) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM resume WHERE is_default = 1 LIMIT 1").fetchone()
+        return dict(row) if row else None
+
+    def delete_resume(self, rid: str) -> None:
+        was_default = (self.get_resume(rid) or {}).get("is_default")
+        self.conn.execute("DELETE FROM resume WHERE id=?", (rid,))
+        # if we removed the default, promote the most recent remaining resume
+        if was_default:
+            nxt = self.conn.execute(
+                "SELECT id FROM resume ORDER BY created_at DESC LIMIT 1").fetchone()
+            if nxt:
+                self.conn.execute("UPDATE resume SET is_default=1 WHERE id=?", (nxt["id"],))
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()

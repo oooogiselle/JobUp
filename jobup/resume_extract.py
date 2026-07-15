@@ -50,7 +50,10 @@ _EXTRACT_SYSTEM = (
     "Return ONLY a JSON object (no markdown fences, no commentary) with exactly "
     "these keys: name, email, phone, github, linkedin, portfolio, location, "
     "summary, work_authorization, skills (array of strings), and experience (array "
-    'of objects each with keys: title, org, dates, bullets [array of strings]).'
+    "of objects each with keys: title, org, dates, bullets [array of strings]).\n"
+    "For each experience entry, split the responsibilities/achievements into "
+    "SEPARATE bullet strings — one accomplishment per bullet, faithful to the "
+    "resume's wording. Do not merge multiple bullets into one string."
 )
 
 

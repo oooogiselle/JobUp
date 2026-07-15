@@ -16,6 +16,7 @@ class SourcesConfig:
     lever_tokens: list[str] = field(default_factory=list)
     ashby_tokens: list[str] = field(default_factory=list)
     simplify_repos: list[str] = field(default_factory=list)
+    workday_sites: list[str] = field(default_factory=list)
     company_sites: list[dict] = field(default_factory=list)
     indeed: dict = field(default_factory=dict)
     # Optional display-name overrides: {"token": "Company Name"}
@@ -54,6 +55,7 @@ def load_settings(path: str | Path = "config/config.yaml") -> Settings:
             lever_tokens=src.get("lever_tokens", []) or [],
             ashby_tokens=src.get("ashby_tokens", []) or [],
             simplify_repos=src.get("simplify_repos", []) or [],
+            workday_sites=src.get("workday_sites", []) or [],
             company_sites=src.get("company_sites", []) or [],
             indeed=src.get("indeed", {}) or {},
             company_names=src.get("company_names", {}) or {},

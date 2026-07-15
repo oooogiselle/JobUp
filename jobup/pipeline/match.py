@@ -19,10 +19,22 @@ _YEARS = re.compile(r"(?i)(\d+)\+?\s*(?:-\s*\d+\s*)?years?")
 
 
 def hard_filters(job: JobPosting, profile: UserProfile,
-                 max_years: int = 2) -> str | None:
-    """Return the name of the first failed filter, or None if all pass."""
+                 target: dict | None = None, max_years: int = 2) -> str | None:
+    """Return the name of the first failed filter, or None if all pass.
+    `target` (config.yaml → target) adds precise control:
+      - exclude: title words that auto-reject (e.g. senior, manager, sales)
+      - roles:   if set, the title MUST contain one of these (e.g. engineer, ml)
+    Both run before any LLM call, so filtering out unwanted jobs is free."""
+    target = target or {}
+    title = job.title.lower()
+
     if _SENIOR.search(job.title):
         return "level_senior_title"
+    if any(w.lower() in title for w in target.get("exclude", [])):
+        return "excluded_title"
+    roles = [w.lower() for w in target.get("roles", [])]
+    if roles and not any(w in title for w in roles):
+        return "role_mismatch"
 
     # Years-of-experience requirement in the JD beyond a new grad.
     for m in _YEARS.finditer(job.description_clean):
@@ -63,8 +75,8 @@ def triage(job: JobPosting, profile: UserProfile, llm: LLMClient) -> TriageDecis
 
 
 def match(job: JobPosting, profile: UserProfile, llm: LLMClient,
-          min_score: float = 0.6) -> MatchResult:
-    failed = hard_filters(job, profile)
+          min_score: float = 0.6, target: dict | None = None) -> MatchResult:
+    failed = hard_filters(job, profile, target=target)
     if failed:
         return MatchResult(job_id=job.id, relevant=False, score=0.0,
                            reasons=[f"hard filter: {failed}"],

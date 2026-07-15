@@ -20,6 +20,7 @@ from .sources.base import ConnectorResult
 from .sources.greenhouse import GreenhouseConnector
 from .sources.lever import LeverConnector
 from .sources.simplify import SimplifyConnector
+from .sources.workday import WorkdayConnector
 
 
 def build_connectors(settings: Settings, client: httpx.AsyncClient):
@@ -33,6 +34,8 @@ def build_connectors(settings: Settings, client: httpx.AsyncClient):
         connectors.append(AshbyConnector(token, company=names.get(token), client=client))
     for repo in settings.sources.simplify_repos:
         connectors.append(SimplifyConnector(repo, client=client))
+    for site in settings.sources.workday_sites:
+        connectors.append(WorkdayConnector(site, company=names.get(site), client=client))
     # Indeed MCP / custom company crawl added later.
     return connectors
 
@@ -66,8 +69,19 @@ async def discover(settings: Settings, dry_run: bool = False) -> dict:
         for job in dd.fresh:
             store.insert(job)
 
+    # Aggregate per source type (there may be many boards of the same kind).
+    from collections import defaultdict
+    agg: dict = defaultdict(lambda: {"jobs": 0, "boards": 0, "failed": 0})
+    for r in results:
+        a = agg[r.name]
+        a["boards"] += 1
+        if r.ok:
+            a["jobs"] += len(r.postings)
+        else:
+            a["failed"] += 1
     summary = {
-        "sources": {r.name: (len(r.postings) if r.ok else r.error) for r in results},
+        "sources": {k: f"{v['jobs']} jobs from {v['boards'] - v['failed']}/{v['boards']} boards"
+                    for k, v in agg.items()},
         "errors": {r.name: r.error for r in results if not r.ok},
         "ingested": len(raw),
         "normalized": len(jobs),

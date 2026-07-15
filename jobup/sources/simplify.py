@@ -9,6 +9,7 @@ connectors cover in depth."""
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -36,8 +37,29 @@ def _apply_url(cell: str) -> str:
     return (hrefs or _HREF.findall(cell) or [""])[0]
 
 
-def _row(company_cell, role_cell, loc_cell, app_cell, last_company: str):
-    """Build one posting from 4 cells; returns (RawPosting|None, new_last_company)."""
+def _parse_age(cell: str) -> datetime | None:
+    """Parse the 'posted' column (e.g. '2d', '5h', '3w', '1mo') into a date, so
+    recent new-grad postings sort to the top."""
+    s = _clean(cell).lower()
+    now = datetime.now(timezone.utc)
+    if s in ("today", "0d", "now"):
+        return now
+    m = re.match(r"(\d+)\s*([dhwm])", s)
+    if not m:
+        return None
+    n, unit = int(m.group(1)), m.group(2)
+    if unit == "h":
+        return now
+    if unit == "d":
+        return now - timedelta(days=n)
+    if unit == "w":
+        return now - timedelta(weeks=n)
+    return now - timedelta(days=30 * n)   # 'mo'
+
+
+def _row(company_cell, role_cell, loc_cell, app_cell, last_company: str,
+         posted_cell: str = ""):
+    """Build one posting from the cells; returns (RawPosting|None, new_last_company)."""
     if "🔒" in app_cell:                        # closed listing
         return None, last_company
     company = _clean(company_cell)
@@ -50,6 +72,7 @@ def _row(company_cell, role_cell, loc_cell, app_cell, last_company: str):
         source=JobSourceType.SIMPLIFY, source_ref=url, company=company, title=role,
         location=_clean(loc_cell) or None, apply_url=url, canonical_url=url,
         description_raw="",   # community lists carry no JD text
+        posted_at=_parse_age(posted_cell),
     )
     return post, company
 
@@ -63,7 +86,8 @@ def parse_simplify(text: str) -> list[RawPosting]:
             cells = _TD.findall(tr)
             if len(cells) < 4:
                 continue
-            post, last = _row(cells[0], cells[1], cells[2], cells[3], last)
+            age = cells[4] if len(cells) > 4 else ""
+            post, last = _row(cells[0], cells[1], cells[2], cells[3], last, age)
             if post:
                 out.append(post)
         return out
@@ -82,7 +106,8 @@ def parse_simplify(text: str) -> list[RawPosting]:
             continue
         if set(cells[0]) <= set("-: ") or not in_table:
             continue
-        post, last = _row(cells[0], cells[1], cells[2], cells[3], last)
+        age = cells[4] if len(cells) > 4 else ""
+        post, last = _row(cells[0], cells[1], cells[2], cells[3], last, age)
         if post:
             out.append(post)
     return out

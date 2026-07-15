@@ -173,11 +173,16 @@ def test_prompts_sanitize_injected_jd():
 
 def test_prepare_job_builds_prepared_application():
     llm = FakeLLM(parse_fn=_parse_fn(), generate_fn=lambda u: "# Resume\n- Built a Python service.")
-    app = prepare_job(_job(), _profile(), {"github": "x", "portfolio": ""}, llm)
+    # answer profile carries a standard-question value (start date) but not salary.
+    app = prepare_job(_job(), _profile(), {"earliest_start_date": "June 2026"}, llm)
     assert app is not None
     assert app.status == "prepared"          # agent never sets 'applied' (invariant #1)
     assert app.apply_url.startswith("https://")
-    assert "portfolio" in app.unanswered      # empty answer flagged for the human
+    # canonical schema: known values prefilled, blanks flagged for the human.
+    assert app.answers["earliest_start_date"] == "June 2026"
+    assert app.answers["needs_sponsorship"] == "No"     # from profile.needs_sponsorship
+    assert "salary_expectation" in app.unanswered
+    assert "why_this_company" in app.unanswered          # per-job, generated on approve
 
 
 def test_prepare_job_returns_none_when_irrelevant():

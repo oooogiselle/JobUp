@@ -56,6 +56,18 @@ def test_to_answers_merges_links_and_preserves_existing():
     assert ans["email"] == "jane@x.com"
 
 
+def test_profile_to_markdown_preserves_bullets():
+    from jobup.models import ExperienceItem, UserProfile
+    from jobup.render.master_resume import profile_to_markdown
+    p = UserProfile(name="Jane Doe", summary="New-grad SWE", skills=["python", "go"],
+                    experience=[ExperienceItem(title="Intern", org="Acme", dates="2025",
+                                               bullets=["Built a Python service.", "Cut latency 40%."])])
+    md = profile_to_markdown(p)
+    assert "# Jane Doe" in md and "## Experience" in md and "## Skills" in md
+    assert "- Built a Python service." in md and "- Cut latency 40%." in md
+    assert "**Intern | Acme | 2025**" in md
+
+
 def test_ingest_resume_saves_and_reloads(tmp_path):
     pfile = tmp_path / "profile.yaml"
     afile = tmp_path / "answers.yaml"

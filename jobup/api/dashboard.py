@@ -62,6 +62,9 @@ DASHBOARD_HTML = r"""<!doctype html>
   .b-heavy{ background:color-mix(in srgb,var(--warn) 15%,transparent); color:var(--warn); }
   .b-status{ background:color-mix(in srgb,var(--muted) 14%,transparent); color:var(--muted); text-transform:capitalize; }
   .b-score{ background:color-mix(in srgb,var(--brand) 14%,transparent); color:var(--brand-ink); }
+  .b-hi{ background:linear-gradient(135deg,#635bff,#00d4ff); color:#fff; }
+  .card.hi{ box-shadow:inset 3px 0 #00d4ff; }
+  .card.hi.sel{ box-shadow:inset 3px 0 var(--brand); }
   button { font:inherit; font-weight:600; padding:8px 15px; border-radius:9px; border:1px solid var(--line); background:var(--panel); cursor:pointer; margin-right:8px; color:var(--fg); transition:.15s; }
   button:hover { border-color:var(--muted); transform:translateY(-1px); box-shadow:var(--shadow); }
   button.primary{ background:var(--brand); color:#fff; border-color:var(--brand); box-shadow:0 2px 6px rgba(99,91,255,.35); }
@@ -119,20 +122,34 @@ const api = {
   get:(id)=>J("/api/applications/"+id),
   act:(id,a)=>J("/api/applications/"+id+"/"+a,{method:"POST"}),
   bulk:(action,ids)=>J("/api/applications/bulk-action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,ids})}),
+  importJobs:(file)=>{const fd=new FormData();fd.append("file",file);return req("/api/import",{method:"POST",body:fd}).then(async r=>({ok:r.ok,body:await r.json()}));},
   patch:(id,answers)=>J("/api/applications/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({answers})}),
   assistedApply:(id)=>req("/api/applications/"+id+"/assisted-apply",{method:"POST"}).then(async r=>({ok:r.ok,body:await r.json()})),
   openPdf:(id)=>req("/api/applications/"+id+"/resume.pdf").then(r=>r.blob()).then(b=>window.open(URL.createObjectURL(b),"_blank")),
   coverLetter:(id)=>req("/api/applications/"+id+"/cover-letter",{method:"POST"}).then(async r=>({ok:r.ok,body:await r.json()})),
+  finalize:(id)=>req("/api/applications/"+id+"/finalize",{method:"POST"}).then(async r=>({ok:r.ok,body:await r.json()})),
   openCoverPdf:(id)=>req("/api/applications/"+id+"/cover-letter.pdf").then(r=>r.blob()).then(b=>window.open(URL.createObjectURL(b),"_blank")),
+  openPackage:(id)=>req("/api/applications/"+id+"/package.zip").then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="jobup-package.zip";a.click();URL.revokeObjectURL(u);}),
+  runStatus:()=>J("/api/run"),
+  triggerRun:()=>req("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})}).then(async r=>({ok:r.ok,body:await r.json()})),
   profile:()=>J("/api/profile"),
   saveProfile:(p)=>J("/api/profile",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)}),
   saveAnswers:(a)=>J("/api/answers-profile",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(a)}),
   upload:(file)=>{const fd=new FormData();fd.append("file",file);return req("/api/profile/upload",{method:"POST",body:fd}).then(async r=>({ok:r.ok,body:await r.json()}));},
+  resumes:()=>J("/api/resumes"),
+  getResume:(id)=>J("/api/resumes/"+id),
+  saveResume:(body)=>J("/api/resumes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}),
+  delResume:(id)=>J("/api/resumes/"+id,{method:"DELETE"}),
+  setDefaultResume:(id)=>J("/api/resumes/"+id+"/default",{method:"POST"}),
+  openResumePdf:(id)=>req("/api/resumes/"+id+"/pdf").then(r=>r.blob()).then(b=>window.open(URL.createObjectURL(b),"_blank")),
 };
 const fmtDate=(s)=>s?new Date(s).toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"}):"—";
+const LABELS={work_authorization:"Work authorization",needs_sponsorship:"Needs visa sponsorship",willing_to_relocate:"Willing to relocate",onsite_ok:"Open to onsite / hybrid",earliest_start_date:"Earliest start date",degree:"Degree",graduation_date:"Graduation date",salary_expectation:"Salary expectation",why_this_company:"Why this company"};
+const labelFor=(k)=>LABELS[k]||k;
 const ToastCtx = React.createContext(()=>{});
 
 function Badges({a}){return(<>
+  {a.score!=null&&a.score>=0.8&&<span className="badge b-hi">★ high fit</span>}{" "}
   {a.score!=null&&<span className="badge b-score">match {(a.score*100).toFixed(0)}%</span>}{" "}
   {a.factual_check_passed?<span className="badge b-ok">✓ verified</span>:<span className="badge b-fail">⚠ factual</span>}{" "}
   {a.needs_heavy_rewrite&&<span className="badge b-heavy">heavy rewrite?</span>}{" "}
@@ -170,7 +187,7 @@ function AnswerForm({d,onSaved}){
   return(<details open>
     <summary>Application answers (autofilled — review &amp; edit)</summary>
     <div className="form-grid">{keys.map(k=>(<React.Fragment key={k}>
-      <label>{k}</label>
+      <label>{labelFor(k)}</label>
       <input value={vals[k]??""} className={(vals[k]??"")===""?"missing":""} onChange={e=>setVals({...vals,[k]:e.target.value})}/>
     </React.Fragment>))}</div>
     <button className="primary sm" onClick={save}>Save answers</button>
@@ -183,6 +200,10 @@ function Detail({id,onChanged}){
   const reload=()=>api.get(id).then(setD);
   React.useEffect(()=>{if(id){setMsg("");setClMsg("");api.get(id).then(setD);}},[id]);
   const genCover=()=>{setClMsg("Generating (grounded + verified)…");api.coverLetter(id).then(res=>{setClMsg(res.ok?"":"⚠ "+(res.body.detail||"failed"));reload();toast(res.ok?"cover letter ready":"cover letter failed");});};
+  // Approve = advance to 'approved' AND generate the cover letter + "why this
+  // company" on the spot, then the apply package is one download away.
+  const approve=()=>{setClMsg("Approving → generating cover letter + answers (grounded + verified)…");
+    api.finalize(id).then(res=>{setClMsg(res.ok?"":"⚠ "+(res.body.detail||"failed"));reload();onChanged();toast(res.ok?"approved — package ready":"approve failed");});};
   if(!id) return <div className="empty">Select an application. Shortcuts: <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> approve · <kbd>s</kbd> skip · <kbd>o</kbd> open job</div>;
   if(!d) return <div className="empty">Loading…</div>;
   const r=d.tailored_resume||{};
@@ -193,17 +214,18 @@ function Detail({id,onChanged}){
     <div className="kv">{d.company} · {d.location||"—"} · team: {d.enrichment?.team||"unknown"} · posted {fmtDate(d.posted_at)}</div>
     <div style={{margin:"10px 0"}}><Badges a={{...d,...r}}/></div>
     {!r.factual_check_passed&&(<div className="alert"><h4>Factual check failed — do not send as-is</h4>
-      <div>Claims not supported by your experience library:</div>
+      <div>Claims not supported by your experience library{r.revisions?` (auto-revised ${r.revisions}× and still unsupported)`:""}:</div>
       <ul>{(r.unsupported_claims||[]).map((c,i)=><li key={i}>{c}</li>)}</ul></div>)}
     <div style={{margin:"14px 0"}}>
-      {d.status==="prepared"&&<button className="primary" onClick={()=>act("approve")}>Approve</button>}
+      {d.status==="prepared"&&<button className="primary" onClick={approve}>Approve &amp; generate package</button>}
+      {d.status==="approved"&&<button className="primary" onClick={()=>api.openPackage(id)}>Download apply package ↓</button>}
       {d.status==="approved"&&<button className="primary" onClick={()=>act("mark-applied")}>I applied ✔</button>}
       {["prepared","approved"].includes(d.status)&&<button className="warn" onClick={()=>act("skip")}>Skip</button>}
       <button onClick={apply}>Assisted apply — open, autofill &amp; attach PDF ↗</button>
       {d.apply_url&&<a href={d.apply_url} target="_blank" rel="noreferrer"><button>Open job ↗</button></a>}
     </div>
     {msg&&<div className="kv" style={{marginTop:-6}}>{msg}</div>}
-    <div className="kv">The agent never submits — assisted apply fills the form and stops so you review &amp; submit.</div>
+    <div className="kv">The agent never submits — you download the package, apply yourself, then mark it applied.</div>
     <Ats ats={d.ats}/>
     <AnswerForm d={d} onSaved={onChanged}/>
     <details><summary>Job description</summary><JD sections={d.description_sections}/></details>
@@ -216,7 +238,8 @@ function Detail({id,onChanged}){
     {clMsg&&<div className="kv">{clMsg}</div>}
     {d.cover_letter&&!d.cover_letter_ok&&<div className="alert"><h4>Cover letter failed factual check</h4><div>May contain claims not in your experience library — review before sending.</div></div>}
     {d.cover_letter&&<pre>{d.cover_letter}</pre>}
-    {!d.cover_letter&&!clMsg&&<div className="kv">Generate a grounded, fact-checked cover letter for this role.</div>}
+    {!d.cover_letter&&!clMsg&&<div className="kv">Approve (or click Generate) for a grounded, fact-checked cover letter + "why this company".</div>}
+    {d.why_this_company&&<><h3>Why this company{d.why_this_company_ok?"":" ⚠"}</h3><pre>{d.why_this_company}</pre></>}
   </div>);
 }
 
@@ -224,10 +247,22 @@ function Queue({toast}){
   const [apps,setApps]=React.useState([]); const [companies,setCompanies]=React.useState([]);
   const [stats,setStats]=React.useState(null); const [sel,setSel]=React.useState(null);
   const [checked,setChecked]=React.useState(new Set());
-  const [f,setF]=React.useState({q:"",company:"",min_score:"",status:"",posted_since:""});
-  const refresh=React.useCallback(()=>{api.list(f).then(setApps);api.stats().then(setStats);},[f]);
+  const [needsAttn,setNeedsAttn]=React.useState(false);
+  const [run,setRun]=React.useState(null);
+  const [f,setF]=React.useState({q:"",company:"",min_score:"",status:"",posted_since:"",order:"fit"});
+  const importRef=React.useRef();
+  const query=React.useMemo(()=>({...f,...(needsAttn?{needs_attention:true}:{})}),[f,needsAttn]);
+  const refresh=React.useCallback(()=>{api.list(query).then(setApps);api.stats().then(setStats);},[query]);
+  const doImport=(e)=>{const file=e.target.files[0]; if(!file)return; toast("Importing + tailoring…");
+    api.importJobs(file).then(res=>{ if(res.ok){toast(`Imported ${res.body.imported} of ${res.body.parsed}`);refresh();} else toast("⚠ "+(res.body.detail||"import failed")); });};
+  const doRun=()=>{api.triggerRun().then(res=>{ if(res.ok){toast("Run started — discovering + tailoring…");setRun({running:true,phase:"discovering"});}else toast("⚠ "+(res.body.detail||"could not start run")); });};
   React.useEffect(()=>{refresh();},[refresh]);
   React.useEffect(()=>{const t=setInterval(refresh,15000);return ()=>clearInterval(t);},[refresh]);  // auto-refresh
+  React.useEffect(()=>{  // poll run status while a run is active
+    const t=setInterval(()=>api.runStatus().then(s=>{setRun(s); if(s&&!s.running&&s.phase!=="idle"){clearInterval(t);refresh();
+      if(s.phase==="done")toast(`Run done — ${s.summary?.prepared??0} prepared`); if(s.phase==="error")toast("⚠ run error: "+(s.error||""));}}),3000);
+    return ()=>clearInterval(t);},[run&&run.running]);
+  React.useEffect(()=>{api.runStatus().then(setRun);},[]);
   React.useEffect(()=>{api.companies().then(setCompanies);},[apps.length]);
   const upd=(k)=>(e)=>setF({...f,[k]:e.target.value});
   const idx=apps.findIndex(a=>a.id===sel);
@@ -257,7 +292,12 @@ function Queue({toast}){
       <select value={f.company} onChange={upd("company")}><option value="">All companies</option>{companies.map(c=><option key={c} value={c}>{c}</option>)}</select>
       <select value={f.min_score} onChange={upd("min_score")}><option value="">Any fit</option><option value="0.6">≥60%</option><option value="0.7">≥70%</option><option value="0.8">≥80%</option></select>
       <select value={f.status} onChange={upd("status")}><option value="">Any status</option>{["prepared","approved","applied","skipped"].map(s=><option key={s} value={s}>{s}</option>)}</select>
+      <select value={f.order} onChange={upd("order")}><option value="fit">Sort: best fit</option><option value="recent">Sort: newest</option></select>
       <label className="muted">since <input type="date" value={f.posted_since} onChange={upd("posted_since")}/></label>
+      <button className={"sm"+(needsAttn?" warn":"")} onClick={()=>setNeedsAttn(v=>!v)} title="Resumes that failed the factual check">{needsAttn?"⚠ Needs attention ✓":"⚠ Needs attention"}</button>
+      <input ref={importRef} type="file" accept=".csv,.json" style={{display:"none"}} onChange={doImport}/>
+      <button className="primary sm" style={{marginLeft:"auto"}} onClick={doRun} disabled={run&&run.running} title="Discover fresh postings and tailor them">{run&&run.running?("Running: "+(run.phase||"…")):"Run pipeline ▶"}</button>
+      <button className="sm" onClick={()=>importRef.current.click()} title="Import jobs from a CSV/JSON (N8N, LinkedIn export, spreadsheet…)">Import jobs ↥</button>
     </div>
     <div className="wrap">
       <div className="list">
@@ -266,8 +306,8 @@ function Queue({toast}){
           <span className="muted">{checked.size} selected</span>
           {checked.size>0&&<><button className="primary sm" onClick={()=>bulk("approve")}>Approve</button><button className="warn sm" onClick={()=>bulk("skip")}>Skip</button></>}
         </div>
-        {apps.length===0&&<div className="empty">No matching applications.</div>}
-        {apps.map(a=>(<div key={a.id} className={"card"+(sel===a.id?" sel":"")} onClick={()=>setSel(a.id)}>
+        {apps.length===0&&<div className="empty">{needsAttn?"Nothing needs attention — all resumes passed the factual check.":"No matching applications. Click “Run pipeline” to discover + tailor fresh postings."}</div>}
+        {apps.map(a=>(<div key={a.id} className={"card"+(sel===a.id?" sel":"")+(a.score!=null&&a.score>=0.8?" hi":"")} onClick={()=>setSel(a.id)}>
           <input type="checkbox" checked={checked.has(a.id)} onClick={e=>e.stopPropagation()} onChange={()=>toggle(a.id)}/>
           <div className="body">
             <div className="title">{a.title}</div>
@@ -286,11 +326,16 @@ function Field({label,children}){return <div className="field"><label>{label}</l
 function Profile({toast}){
   const [p,setP]=React.useState(null); const [answers,setAnswers]=React.useState({});
   const [busy,setBusy]=React.useState(""); const [newKey,setNewKey]=React.useState("");
+  const [resumes,setResumes]=React.useState([]); const [viewing,setViewing]=React.useState(null);
   const fileRef=React.useRef();
-  React.useEffect(()=>{api.profile().then(d=>{setP(d.profile);setAnswers(d.answers||{});});},[]);
+  React.useEffect(()=>{api.profile().then(d=>{setP(d.profile);setAnswers(d.answers||{});});api.resumes().then(setResumes);},[]);
   if(!p) return <div className="empty">Loading…</div>;
   const upload=(e)=>{const file=e.target.files[0]; if(!file)return; setBusy("Extracting your resume…");
-    api.upload(file).then(res=>{setBusy(""); if(res.ok){setP(res.body.profile);setAnswers(res.body.answers||{});toast("Resume extracted ✓");} else toast("⚠ "+(res.body.detail||"upload failed"));});};
+    api.upload(file).then(res=>{setBusy(""); if(res.ok){setP(res.body.profile);setAnswers(res.body.answers||{});api.resumes().then(setResumes);toast("Resume extracted ✓");} else toast("⚠ "+(res.body.detail||"upload failed"));});};
+  const saveFromProfile=()=>api.saveResume({from_profile:true}).then(r=>{setResumes(r.resumes);toast("Saved to library ✓");});
+  const delRes=(id)=>api.delResume(id).then(r=>{setResumes(r.resumes);if(viewing&&viewing.id===id)setViewing(null);});
+  const viewRes=(id)=>api.getResume(id).then(setViewing);
+  const makeDefault=(id)=>api.setDefaultResume(id).then(r=>{setResumes(r.resumes);toast("Default resume set ✓");});
   const setField=(k,v)=>setP({...p,[k]:v});
   const setExp=(i,k,v)=>{const e=[...p.experience];e[i]={...e[i],[k]:v};setP({...p,experience:e});};
   const addExp=()=>setP({...p,experience:[...(p.experience||[]),{title:"",org:"",dates:"",bullets:[]}]});
@@ -311,6 +356,24 @@ function Profile({toast}){
           : <><div style={{fontSize:15}}>📄 <b>Upload your resume</b> to auto-fill this page</div>
               <div className="muted" style={{marginTop:4}}>PDF, TXT, or MD · click to choose a file</div></>}
       </div>
+    </div>
+
+    <div className="pcard">
+      <h3>Resume library</h3>
+      <div className="desc">Your saved resumes. Each job you prepare gets its own auto-tailored version — this is the base they're remade from.</div>
+      {resumes.length===0&&<div className="muted">No resumes yet — upload one above, or save your profile as a resume.</div>}
+      {resumes.map(rz=>(<div key={rz.id} className="exp" style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1}}>
+          <b>{rz.name}</b> {rz.is_default&&<span className="badge b-score">★ default</span>}
+          <div className="kv">{rz.source} · {fmtDate(rz.created_at)} · {rz.size} chars</div>
+        </div>
+        {!rz.is_default&&<button className="sm" onClick={()=>makeDefault(rz.id)}>Set default</button>}
+        <button className="sm" onClick={()=>viewRes(rz.id)}>View</button>
+        <button className="sm" onClick={()=>api.openResumePdf(rz.id)}>PDF ↧</button>
+        <button className="warn sm" onClick={()=>delRes(rz.id)}>Delete</button>
+      </div>))}
+      {viewing&&<div style={{marginTop:8}}><div className="kv">{viewing.name}</div><pre>{viewing.markdown}</pre></div>}
+      <div className="savebar"><button className="primary" onClick={saveFromProfile}>Save current profile as resume</button></div>
     </div>
 
     <div className="pcard">

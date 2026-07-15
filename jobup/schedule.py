@@ -1,7 +1,11 @@
-"""launchd scheduling (LLD §6, PRD D5). Installs a macOS LaunchAgent that runs
-`python -m jobup.prepare` on the configured interval, catching up on wake.
+"""launchd scheduling (LLD §6, PRD D5). Installs two macOS LaunchAgents:
 
-    python -m jobup.schedule install     # write + load the agent
+  - com.jobup.prepare   — runs `python -m jobup.prepare` every poll_interval_min
+                          (periodic; catches up on wake).
+  - com.jobup.dashboard — keeps `python -m jobup.api` (the review dashboard on
+                          http://127.0.0.1:8765) running, restarting it if it dies.
+
+    python -m jobup.schedule install     # write + load both agents
     python -m jobup.schedule status
     python -m jobup.schedule uninstall
 
@@ -18,11 +22,13 @@ from pathlib import Path
 
 from .config import load_settings
 
-LABEL = "com.jobup.prepare"
+PREPARE_LABEL = "com.jobup.prepare"
+DASHBOARD_LABEL = "com.jobup.dashboard"
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
 
-_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+# Periodic worker: discover -> match -> tailor -> package on an interval.
+_PREPARE_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -43,60 +49,108 @@ _PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 """
 
+# Long-running dashboard: keep the local review UI up (restart if it exits).
+_DASHBOARD_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{python}</string>
+        <string>-m</string><string>jobup.api</string>
+    </array>
+    <key>WorkingDirectory</key><string>{workdir}</string>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>StandardOutPath</key><string>{log}</string>
+    <key>StandardErrorPath</key><string>{err}</string>
+</dict>
+</plist>
+"""
 
-def _render() -> str:
+
+def _plist_path(label: str) -> Path:
+    return LAUNCH_AGENTS / f"{label}.plist"
+
+
+def _logdir() -> Path:
+    d = REPO_ROOT / "data" / "logs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _render_prepare() -> str:
     settings = load_settings(REPO_ROOT / "config" / "config.yaml")
     interval = max(60, int(settings.poll_interval_min) * 60)
-    logdir = REPO_ROOT / "data" / "logs"
-    logdir.mkdir(parents=True, exist_ok=True)
-    return _PLIST.format(
-        label=LABEL, python=sys.executable, workdir=str(REPO_ROOT),
-        interval=interval, log=str(logdir / "prepare.out.log"),
-        err=str(logdir / "prepare.err.log"),
-    )
+    log = _logdir()
+    return _PREPARE_PLIST.format(
+        label=PREPARE_LABEL, python=sys.executable, workdir=str(REPO_ROOT),
+        interval=interval, log=str(log / "prepare.out.log"),
+        err=str(log / "prepare.err.log"))
+
+
+def _render_dashboard() -> str:
+    log = _logdir()
+    return _DASHBOARD_PLIST.format(
+        label=DASHBOARD_LABEL, python=sys.executable, workdir=str(REPO_ROOT),
+        log=str(log / "dashboard.out.log"), err=str(log / "dashboard.err.log"))
+
+
+def _load(label: str, contents: str) -> bool:
+    path = _plist_path(label)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(contents)
+    domain = f"gui/{os.getuid()}"
+    subprocess.run(["launchctl", "bootout", domain, str(path)], capture_output=True)
+    r = subprocess.run(["launchctl", "bootstrap", domain, str(path)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        r = subprocess.run(["launchctl", "load", "-w", str(path)],
+                           capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"  ✗ {label}: launchctl load failed — {r.stderr.strip()}")
+        print(f"    Load manually: launchctl bootstrap {domain} {path}")
+    return r.returncode == 0
+
+
+def _unload(label: str) -> None:
+    domain = f"gui/{os.getuid()}"
+    path = _plist_path(label)
+    subprocess.run(["launchctl", "bootout", domain, str(path)], capture_output=True)
+    if path.exists():
+        path.unlink()
+    print(f"✓ Removed {label}.")
 
 
 def install() -> None:
-    PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PLIST_PATH.write_text(_render())
-    domain = f"gui/{os.getuid()}"
-    subprocess.run(["launchctl", "bootout", domain, str(PLIST_PATH)],
-                   capture_output=True)  # remove any prior instance (ignore errors)
-    r = subprocess.run(["launchctl", "bootstrap", domain, str(PLIST_PATH)],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        r = subprocess.run(["launchctl", "load", "-w", str(PLIST_PATH)],
-                           capture_output=True, text=True)
     settings = load_settings(REPO_ROOT / "config" / "config.yaml")
-    if r.returncode == 0:
-        print(f"✓ Installed {LABEL} — runs every {settings.poll_interval_min} min.")
-        print(f"  plist: {PLIST_PATH}")
-        print(f"  logs:  {REPO_ROOT / 'data' / 'logs'}/prepare.*.log")
-        print("  Note: it runs while you're logged in; asleep runs catch up on wake.")
-    else:
-        print("Wrote the plist but launchctl load failed. Load it manually:")
-        print(f"  launchctl bootstrap {domain} {PLIST_PATH}")
-        print(r.stderr.strip())
+    ok_prepare = _load(PREPARE_LABEL, _render_prepare())
+    ok_dash = _load(DASHBOARD_LABEL, _render_dashboard())
+    if ok_prepare:
+        print(f"✓ {PREPARE_LABEL} — pipeline runs every {settings.poll_interval_min} min.")
+    if ok_dash:
+        print(f"✓ {DASHBOARD_LABEL} — dashboard stays up at http://127.0.0.1:8765/")
+    print(f"  logs: {REPO_ROOT / 'data' / 'logs'}/")
+    print("  Note: agents run while you're logged in; asleep runs catch up on wake.")
 
 
 def uninstall() -> None:
-    domain = f"gui/{os.getuid()}"
-    subprocess.run(["launchctl", "bootout", domain, str(PLIST_PATH)], capture_output=True)
-    if PLIST_PATH.exists():
-        PLIST_PATH.unlink()
-    print(f"✓ Removed {LABEL}.")
+    _unload(PREPARE_LABEL)
+    _unload(DASHBOARD_LABEL)
 
 
 def status() -> None:
     domain = f"gui/{os.getuid()}"
-    r = subprocess.run(["launchctl", "print", f"{domain}/{LABEL}"],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        print(f"{LABEL} is not loaded. Run: python -m jobup.schedule install")
-        return
-    for line in r.stdout.splitlines():
-        if any(k in line for k in ("state =", "pid =", "runs =", "last exit")):
-            print(line.strip())
+    for label in (PREPARE_LABEL, DASHBOARD_LABEL):
+        r = subprocess.run(["launchctl", "print", f"{domain}/{label}"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"{label}: not loaded")
+            continue
+        fields = [ln.strip() for ln in r.stdout.splitlines()
+                  if any(k in ln for k in ("state =", "pid =", "runs =", "last exit"))]
+        print(f"{label}: " + " · ".join(fields))
 
 
 def main() -> None:
