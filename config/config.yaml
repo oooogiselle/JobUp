@@ -1,7 +1,7 @@
 # JobUp configuration (LLD §9). Secrets are NOT here — they come from env
 # (ANTHROPIC_API_KEY, etc.). See docs/SECURITY.md.
 
-poll_interval_min: 20          # frequent polling for timeliness (PRD G8)
+poll_interval_min: 480         # run ~3x/day (every 8h); drives the launchd interval
 daily_summary_at: "08:00"      # daily summary; per-job alerts are real-time
 min_score: 0.6
 

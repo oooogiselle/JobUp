@@ -327,11 +327,16 @@ function Profile({toast}){
   const [p,setP]=React.useState(null); const [answers,setAnswers]=React.useState({});
   const [busy,setBusy]=React.useState(""); const [newKey,setNewKey]=React.useState("");
   const [resumes,setResumes]=React.useState([]); const [viewing,setViewing]=React.useState(null);
+  const [locText,setLocText]=React.useState(""); const [skillText,setSkillText]=React.useState("");
   const fileRef=React.useRef();
-  React.useEffect(()=>{api.profile().then(d=>{setP(d.profile);setAnswers(d.answers||{});});api.resumes().then(setResumes);},[]);
+  // Comma-separated fields keep their raw text while you type (so spaces inside
+  // "San Francisco" aren't stripped mid-word); we only split -> array on save.
+  const parseList=(s)=>s.split(",").map(x=>x.trim()).filter(Boolean);
+  const applyProfile=(pr)=>{setP(pr);setLocText((pr.locations||[]).join(", "));setSkillText((pr.skills||[]).join(", "));};
+  React.useEffect(()=>{api.profile().then(d=>{applyProfile(d.profile);setAnswers(d.answers||{});});api.resumes().then(setResumes);},[]);
   if(!p) return <div className="empty">Loading…</div>;
   const upload=(e)=>{const file=e.target.files[0]; if(!file)return; setBusy("Extracting your resume…");
-    api.upload(file).then(res=>{setBusy(""); if(res.ok){setP(res.body.profile);setAnswers(res.body.answers||{});api.resumes().then(setResumes);toast("Resume extracted ✓");} else toast("⚠ "+(res.body.detail||"upload failed"));});};
+    api.upload(file).then(res=>{setBusy(""); if(res.ok){applyProfile(res.body.profile);setAnswers(res.body.answers||{});api.resumes().then(setResumes);toast("Resume extracted ✓");} else toast("⚠ "+(res.body.detail||"upload failed"));});};
   const saveFromProfile=()=>api.saveResume({from_profile:true}).then(r=>{setResumes(r.resumes);toast("Saved to library ✓");});
   const delRes=(id)=>api.delResume(id).then(r=>{setResumes(r.resumes);if(viewing&&viewing.id===id)setViewing(null);});
   const viewRes=(id)=>api.getResume(id).then(setViewing);
@@ -340,7 +345,9 @@ function Profile({toast}){
   const setExp=(i,k,v)=>{const e=[...p.experience];e[i]={...e[i],[k]:v};setP({...p,experience:e});};
   const addExp=()=>setP({...p,experience:[...(p.experience||[]),{title:"",org:"",dates:"",bullets:[]}]});
   const delExp=(i)=>setP({...p,experience:p.experience.filter((_,j)=>j!==i)});
-  const saveProfile=()=>api.saveProfile(p).then(()=>toast("Profile saved ✓"));
+  const saveProfile=()=>{const payload={...p,locations:parseList(locText),skills:parseList(skillText),
+    experience:(p.experience||[]).map(ex=>({...ex,bullets:(ex.bullets||[]).filter(b=>b.trim())}))};
+    setP(payload);return api.saveProfile(payload).then(()=>toast("Profile saved ✓"));};
   const saveAns=()=>api.saveAnswers(answers).then(()=>toast("Answers saved ✓"));
   const addAns=()=>{const k=newKey.trim(); if(k&&!(k in answers)){setAnswers({...answers,[k]:""});setNewKey("");}};
   const delAns=(k)=>{const a={...answers};delete a[k];setAnswers(a);};
@@ -389,9 +396,9 @@ function Profile({toast}){
             <option value="">—</option><option value="no">No</option><option value="yes">Yes</option>
           </select>
         </Field>
-        <Field label="Target locations (comma-separated)"><input value={(p.locations||[]).join(", ")} onChange={e=>setField("locations",e.target.value.split(",").map(s=>s.trim()).filter(Boolean))}/></Field>
+        <Field label="Target locations (comma-separated)"><input value={locText} placeholder="Remote, San Francisco, New York" onChange={e=>setLocText(e.target.value)}/></Field>
       </div>
-      <Field label="Skills (comma-separated)"><input value={(p.skills||[]).join(", ")} onChange={e=>setField("skills",e.target.value.split(",").map(s=>s.trim()).filter(Boolean))}/></Field>
+      <Field label="Skills (comma-separated)"><input value={skillText} placeholder="Python, React, SQL" onChange={e=>setSkillText(e.target.value)}/></Field>
       <Field label="Summary"><textarea rows="2" value={p.summary||""} onChange={e=>setField("summary",e.target.value)}/></Field>
     </div>
 
@@ -405,7 +412,7 @@ function Profile({toast}){
           <Field label="Organization"><input value={ex.org||""} onChange={e=>setExp(i,"org",e.target.value)}/></Field>
           <Field label="Dates"><input value={ex.dates||""} onChange={e=>setExp(i,"dates",e.target.value)}/></Field>
         </div>
-        <Field label="Bullets (one per line)"><textarea rows="3" value={(ex.bullets||[]).join("\n")} onChange={e=>setExp(i,"bullets",e.target.value.split("\n").filter(Boolean))}/></Field>
+        <Field label="Bullets (one per line)"><textarea rows="3" value={(ex.bullets||[]).join("\n")} onChange={e=>setExp(i,"bullets",e.target.value.split("\n"))}/></Field>
       </div>))}
       <button className="sm" onClick={addExp}>+ Add experience</button>
       <div className="savebar"><button className="primary" onClick={saveProfile}>Save profile</button></div>
