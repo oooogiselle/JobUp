@@ -78,7 +78,7 @@ def import_and_prepare(jobs: list[JobPosting], profile, answers: dict,
     for job in jobs:
         if store.get_application(job.id) is not None:
             continue
-        resume = tailor(job, profile, llm)
+        resume = tailor(job, profile, llm, answers=answers)
         app = build_application(job, resume, enrich(job), answers, profile=profile)
         # match=None -> score stored as None (user-selected, not AI-scored)
         store.upsert_application(job, app, None)

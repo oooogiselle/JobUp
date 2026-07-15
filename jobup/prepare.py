@@ -30,7 +30,7 @@ def _build(job: JobPosting, profile: UserProfile, answers: dict,
            llm: LLMClient) -> Application:
     """enrich -> tailor -> package (assumes the job already passed matching)."""
     enrichment = enrich(job)
-    resume = tailor(job, profile, llm)
+    resume = tailor(job, profile, llm, answers=answers)
     return build_application(job, resume, enrichment, answers, profile=profile)
 
 

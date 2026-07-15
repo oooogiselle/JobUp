@@ -39,25 +39,62 @@ def triage_user(job: JobPosting, profile: UserProfile) -> str:
 # --- resume tailoring ------------------------------------------------------
 
 TAILOR_SYSTEM = (
-    "You lightly tailor a candidate's resume to a specific job. RULES:\n"
-    "1. GROUNDING: every skill, tool, metric, title, and achievement in your "
-    "output MUST be directly supported by the EXPERIENCE LIBRARY provided. Do NOT "
-    "add, infer, or embellish. If the job wants something the candidate lacks, "
-    "omit it — never invent it.\n"
-    "2. LIGHT alignment by default: reorder and re-emphasize existing bullets, "
-    "align vocabulary to the job's real keywords the candidate genuinely has, and "
-    "tune the summary line. Preserve overall structure and length.\n"
-    "3. Output ONLY the tailored resume in Markdown. No commentary.\n\n"
+    "You produce a clean, ATS-friendly, one-to-two-page resume in Markdown, "
+    "tailored to a specific job and STRICTLY grounded in the candidate's data.\n"
+    "STRUCTURE — use exactly this section order; omit a section only if there is "
+    "no real content for it:\n"
+    "1. `# <Full Name>` as the very first line (from CANDIDATE IDENTITY — the name, "
+    "NOT the job title).\n"
+    "2. Directly under the name, ONE contact line (the CONTACT value), parts "
+    "separated by ' · '. No heading, no bullet.\n"
+    "3. `## Summary` — a 1–2 sentence positioning line tuned to this job.\n"
+    "4. `## Skills` — grouped and comma-separated (e.g. `**Languages:** ...`), only "
+    "skills the candidate genuinely has.\n"
+    "5. `## Experience` — each role as `**Title | Org, Location | Dates**` followed "
+    "by `- ` bullets (strong verb + concrete impact/metric). Most relevant first.\n"
+    "6. `## Education` — from CANDIDATE IDENTITY / library (degree, school, "
+    "graduation) when available.\n"
+    "7. `## Projects` — only if the library contains real projects.\n"
+    "GROUNDING RULES:\n"
+    "- Every skill, tool, metric, title, employer, date, and achievement MUST be "
+    "supported by the EXPERIENCE LIBRARY or CANDIDATE IDENTITY. Never add, infer, "
+    "or embellish. If the job wants something the candidate lacks, omit it.\n"
+    "- LIGHT mode reorders/re-emphasizes and aligns vocabulary to the job's real "
+    "keywords the candidate genuinely has; it preserves the underlying facts.\n"
+    "- Output ONLY the resume Markdown — no commentary, no code fences.\n\n"
     + UNTRUSTED_SYSTEM_RULE
 )
 
 
-def tailor_user(job: JobPosting, profile: UserProfile, mode: str = "light") -> str:
+def identity_facts(profile: UserProfile, answers: dict | None = None) -> str:
+    """Ground-truth identity/education lines (name, location, contact links,
+    degree, graduation) drawn from the profile + reusable answers. Fed to the
+    tailor as the resume header source AND to the verifier as ground truth, so a
+    real degree/link is never flagged as an unsupported fabrication."""
+    answers = answers or {}
+    facts: list[str] = []
+    if profile.name:
+        facts.append(f"Name: {profile.name}")
+    loc = next((l for l in (profile.locations or []) if l), "")
+    if loc:
+        facts.append(f"Location: {loc}")
+    for label, key in (("Email", "email"), ("Phone", "phone"), ("GitHub", "github"),
+                       ("LinkedIn", "linkedin"), ("Portfolio", "portfolio"),
+                       ("Degree", "degree"), ("Graduation", "graduation_date")):
+        if answers.get(key):
+            facts.append(f"{label}: {answers[key]}")
+    return "\n".join(facts)
+
+
+def tailor_user(job: JobPosting, profile: UserProfile, mode: str = "light",
+                answers: dict | None = None) -> str:
     depth = ("Do a LIGHT alignment." if mode == "light"
              else "Do a HEAVIER truthful rewrite (deeper restructuring), still "
                   "strictly grounded in the experience library.")
     return (
-        f"EXPERIENCE LIBRARY (the only facts you may use):\n"
+        f"CANDIDATE IDENTITY (use for the resume header + Education; ground truth):\n"
+        f"{identity_facts(profile, answers) or '(name unknown)'}\n\n"
+        f"EXPERIENCE LIBRARY (the only professional facts you may use):\n"
         f"{profile.experience_library_text()}\n\n"
         f"TARGET JOB: {job.company} — {job.title} ({job.location})\n"
         f"{_fenced_jd(job)}\n\n{depth}"

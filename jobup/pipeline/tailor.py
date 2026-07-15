@@ -23,6 +23,7 @@ from ..llm.prompts import (
     TAILOR_SYSTEM,
     VERIFY_SYSTEM,
     fit_user,
+    identity_facts,
     tailor_revise_user,
     tailor_user,
     verify_user,
@@ -34,11 +35,12 @@ from ..models import JobPosting, TailoredResume, UserProfile
 MAX_REVISIONS = 2
 
 
-def _draft(job: JobPosting, profile: UserProfile, llm: LLMClient, mode: str) -> str:
+def _draft(job: JobPosting, profile: UserProfile, llm: LLMClient, mode: str,
+           answers: dict | None) -> str:
     return llm.generate(
         model=TAILOR_MODEL,
         system=TAILOR_SYSTEM,
-        user=tailor_user(job, profile, mode=mode),
+        user=tailor_user(job, profile, mode=mode, answers=answers),
         thinking=True,
     )
 
@@ -53,13 +55,19 @@ def _revise(job: JobPosting, profile: UserProfile, draft: str,
     )
 
 
-def verify_factual(resume_markdown: str, profile: UserProfile,
-                   llm: LLMClient) -> FactualCheck:
-    """Grounding gate: every concrete claim must trace to the experience library."""
+def verify_factual(resume_markdown: str, profile: UserProfile, llm: LLMClient,
+                   answers: dict | None = None) -> FactualCheck:
+    """Grounding gate: every concrete claim must trace to the experience library
+    OR the candidate's identity facts (name/location/links/degree/graduation),
+    which are legitimate ground truth for a resume header + Education section."""
+    library = profile.experience_library_text()
+    extra = identity_facts(profile, answers)
+    if extra:
+        library = f"{library}\n\nIDENTITY / EDUCATION (also ground truth):\n{extra}"
     return llm.parse(
         model=TRIAGE_MODEL,
         system=VERIFY_SYSTEM,
-        user=verify_user(resume_markdown, profile.experience_library_text()),
+        user=verify_user(resume_markdown, library),
         schema=FactualCheck,
     )
 
@@ -74,18 +82,19 @@ def assess_fit(job: JobPosting, resume_markdown: str, llm: LLMClient) -> FitAsse
 
 
 def tailor(job: JobPosting, profile: UserProfile, llm: LLMClient,
-           mode: str = "light", max_revisions: int = MAX_REVISIONS) -> TailoredResume:
-    """Produce a grounded, verified tailored resume. Runs a bounded
-    draft->verify->revise->re-verify loop: a failed check feeds the flagged
-    claims back for correction (up to max_revisions). Never emits an unverified
-    resume as clean — if it still fails after the cap, factual_check_passed is
-    False and the resume is flagged for review."""
-    draft = _draft(job, profile, llm, mode)
-    check = verify_factual(draft, profile, llm)
+           mode: str = "light", answers: dict | None = None,
+           max_revisions: int = MAX_REVISIONS) -> TailoredResume:
+    """Produce a grounded, verified tailored resume with a proper header (name +
+    contact + Education from `answers`). Runs a bounded draft->verify->revise->
+    re-verify loop: a failed check feeds the flagged claims back for correction
+    (up to max_revisions). Never emits an unverified resume as clean — if it
+    still fails after the cap, factual_check_passed is False and it's flagged."""
+    draft = _draft(job, profile, llm, mode, answers)
+    check = verify_factual(draft, profile, llm, answers)
     revisions = 0
     while not check.passed and revisions < max_revisions:
         draft = _revise(job, profile, draft, check.unsupported_claims, llm)
-        check = verify_factual(draft, profile, llm)
+        check = verify_factual(draft, profile, llm, answers)
         revisions += 1
     fit = assess_fit(job, draft, llm)
 
